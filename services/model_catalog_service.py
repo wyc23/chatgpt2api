@@ -17,7 +17,13 @@ from utils.helper import CODEX_IMAGE_MODEL, WEB_IMAGE_MODELS
 
 
 FALLBACK_CHAT_MODELS = [
-    "gpt-5.6",
+    "gpt-5-6",
+    "gpt-5-6-mini",
+    "gpt-5-6-t-mini",
+    "gpt-5-3-mini",
+    "gpt-6",
+    "gpt-6-mini",
+    "gpt-6-t-mini",
     "auto",
 ]
 

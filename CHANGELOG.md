@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 3.3.0 - 2026-10-21
+
++ [新增] 同步 ChatGPT Web 最新模型列表：默认聊天模型目录扩展为 `gpt-5-6`、`gpt-5-6-mini`、`gpt-5-6-t-mini`、`gpt-5-3-mini`、`gpt-6`、`gpt-6-mini`、`gpt-6-t-mini` 和 `auto`，`/v1/models` 与控制台共用该目录。
++ [优化] Sentinel 请求准备流程记录 finalize 返回的 `persona` 与过期信息；当上游标记 so collector 必填但未回传 `so_token` 时输出告警日志作为观察点，暂不要求客户端求解。
++ [优化] 匿名对话遇到上游风控 403 时透传响应中的 `detail` 文案（如“Unusual activity has been detected from your device”），不再只显示裸状态码。
++ [优化] 控制台模型图表配色新增 `gpt-5-6` 与 `gpt-6` 系列显式绑定，保留旧模型兼容项。
++ [修复] 设置页存储审核的 AI 模型占位示例由过期的 `gpt-5.4-mini` 更新为 `gpt-5-3-mini`。
+
 ## 3.2.3 - 2026-09-09
 
 + [新增] Python 图片接口和共享模型列表支持 `gpt-image-2.5`、`gpt-image-2.5-flare`、`gpt-image-2.5-sunburst`，通过 ChatGPT Web 的 `auto` 路由兼容，不包含 `exact` 别名。

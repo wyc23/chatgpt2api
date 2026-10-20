@@ -56,6 +56,8 @@ class ChatRequirements:
     proof_token: str = ""
     turnstile_token: str = ""
     so_token: str = ""
+    persona: str = ""
+    so_required: bool = False
     raw_finalize: Optional[Dict[str, Any]] = None
 
 
@@ -668,6 +670,8 @@ class OpenAIBackendAPI:
             proof_token=proof_token,
             turnstile_token=turnstile_token,
             so_token=data.get("so_token", ""),
+            persona=str(data.get("persona") or ""),
+            so_required=bool((data.get("so") or {}).get("required")),
             raw_finalize=data,
         )
 
@@ -3591,6 +3595,28 @@ class OpenAIBackendAPI:
             timeout=300,
             stream=True,
         )
+        if response.status_code == 403 and not self.access_token:
+            # 上游对匿名流量的风控门槛：body 是 JSON（如 "Unusual activity has been
+            # detected from your device"），此前直接透传裸 403，用户看不到原因。
+            # stream 模式下 body 只能通过 iter_content 取回。
+            raw_body = b"".join(response.iter_content())
+            detail = ""
+            try:
+                detail = str((json.loads(raw_body) or {}).get("detail") or "")
+            except Exception:
+                detail = raw_body.decode("utf-8", "replace")[:300]
+            if not detail:
+                detail = "匿名请求被上游风控拒绝（403，响应体为空）"
+            logger.warning({
+                "event": "anon_conversation_risk_rejected",
+                "detail": detail,
+            })
+            raise UpstreamHTTPError(
+                "conversation",
+                403,
+                {"detail": detail or raw_body.decode("utf-8", "replace")[:300]},
+                credential_scope="public",
+            )
         ensure_ok(response, path)
         try:
             yield from iter_sse_payloads(response)
@@ -3719,11 +3745,23 @@ class OpenAIBackendAPI:
             message = "missing auth chat requirements token" if self.access_token else "missing chat requirements token"
             raise RuntimeError(f"{message}: {data}")
 
+        so_info = prepare_data.get("so") or {}
+        if so_info.get("required") and not data.get("so_token"):
+            # 上游已把 so collector 标记为必填，但 finalize 尚未回传 so_token，
+            # 目前对话链路仍可通行，先留观察点；若日后开始依赖 so_token 需要实现 solver。
+            logger.warning({
+                "event": "sentinel_so_collector_required_without_token",
+                "authed": bool(self.access_token),
+                "has_collector_dx": bool(so_info.get("collector_dx")),
+            })
+
         return ChatRequirements(
             token=token,
             proof_token=proof_token,
             turnstile_token=turnstile_token,
             so_token=data.get("so_token", ""),
+            persona=str(data.get("persona") or ""),
+            so_required=bool(so_info.get("required")),
             raw_finalize=data,
         )
 

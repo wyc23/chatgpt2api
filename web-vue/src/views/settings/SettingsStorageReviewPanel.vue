@@ -126,7 +126,7 @@
           v-model.trim="settings.ai_review.model"
           block
           :disabled="fieldReadOnly('ai_review.model')"
-          placeholder="gpt-5.4-mini"
+          placeholder="gpt-5-3-mini"
         />
       </FormField>
 
