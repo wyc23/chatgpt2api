@@ -266,7 +266,7 @@ _FIELD_SPECS: dict[str, dict[str, Any]] = {
     "ai_review.model": _field_metadata(""),
     "ai_review.prompt": _field_metadata(""),
     "image_storage.enabled": _field_metadata(False),
-    "image_storage.mode": _field_metadata("local", options=("local", "webdav", "both")),
+    "image_storage.mode": _field_metadata("local", options=("local", "webdav", "both", "r2")),
     "image_storage.webdav_url": _field_metadata(""),
     "image_storage.webdav_username": _field_metadata(""),
     "image_storage.webdav_password": _field_metadata("", sensitive=True),
@@ -562,7 +562,7 @@ class SettingsManagementService:
             ),
             image_storage=ImageStorageSettings(
                 enabled=_bool(image_storage.get("enabled"), False),
-                mode=_enum(image_storage.get("mode"), "local", {"local", "webdav", "both"}),
+                mode=_enum(image_storage.get("mode"), "local", {"local", "webdav", "both", "r2"}),
                 webdav_url=_url(image_storage.get("webdav_url")),
                 webdav_username=_text(image_storage.get("webdav_username")),
                 webdav_password="",

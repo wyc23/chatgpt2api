@@ -18,7 +18,7 @@ keep separate repository interfaces and transaction boundaries. A repository
 stores a domain projection; it does not normalize business rules or produce UI
 semantics.
 
-Image Assets and their local/WebDAV files, gallery catalog and tags, Image Task
+Image Assets and their local/WebDAV/R2 files, gallery catalog and tags, Image Task
 state, thumbnails, temporary upload spools, and generated editable files remain
 outside the Application Database. Active Requests and other live monitoring
 windows remain process memory.

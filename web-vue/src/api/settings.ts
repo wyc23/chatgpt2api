@@ -23,6 +23,48 @@ export interface ImageStorageSyncResult {
   failed: number
 }
 
+export interface ImageStorageTarget {
+  id: string
+  name: string
+  enabled: boolean
+  account_id: string
+  bucket: string
+  access_key_id: string
+  prefix: string
+  public_base_url: string
+  signed_url_expiry_minutes: number
+  upload_timeout_secs: number
+  used_bytes: number
+  object_count: number
+  reserved_bytes: number
+  capacity_checked_at: string | null
+  capacity_error: string
+  health_status: string
+  has_secret_access_key: boolean
+  asset_count: number
+  legacy: boolean
+  can_delete: boolean
+}
+
+export interface ImageStorageTargetInput {
+  name?: string
+  enabled?: boolean
+  account_id?: string
+  bucket?: string
+  access_key_id?: string
+  secret_access_key?: string
+  prefix?: string
+  public_base_url?: string
+  upload_timeout_secs?: number
+}
+
+export interface ImageStorageTargetTestResult {
+  ok: boolean
+  status?: number
+  target_id?: string
+  error?: string | null
+}
+
 export interface RetentionCleanupRequest {
   log_retention_hours?: number
   image_retention_hours?: number
@@ -181,6 +223,35 @@ export const settingsApi = {
 
   syncImageStorage: () =>
     apiClient.post<Record<string, never>, { result: ImageStorageSyncResult }>('/api/image-storage/sync', {}),
+
+  listImageStorageTargets: () =>
+    apiClient.get<never, { targets: ImageStorageTarget[] }>('/api/image-storage/r2/targets'),
+
+  createImageStorageTarget: (payload: ImageStorageTargetInput & {
+    name: string
+    account_id: string
+    bucket: string
+    access_key_id: string
+    secret_access_key: string
+  }) =>
+    apiClient.post<ImageStorageTargetInput, { target: ImageStorageTarget }>('/api/image-storage/r2/targets', payload),
+
+  updateImageStorageTarget: (targetId: string, payload: ImageStorageTargetInput) =>
+    apiClient.patch<ImageStorageTargetInput, { target: ImageStorageTarget }>(
+      `/api/image-storage/r2/targets/${encodeURIComponent(targetId)}`,
+      payload,
+    ),
+
+  deleteImageStorageTarget: (targetId: string) =>
+    apiClient.delete<never, { deleted: boolean; id: string }>(
+      `/api/image-storage/r2/targets/${encodeURIComponent(targetId)}`,
+    ),
+
+  testImageStorageTarget: (targetId: string) =>
+    apiClient.post<Record<string, never>, { result: ImageStorageTargetTestResult }>(
+      `/api/image-storage/r2/targets/${encodeURIComponent(targetId)}/test`,
+      {},
+    ),
 
   previewRetentionCleanup: (payload: RetentionCleanupRequest = {}) =>
     apiClient.post<RetentionCleanupRequest, RetentionCleanupResult>('/api/settings/retention-cleanup/preview', payload),

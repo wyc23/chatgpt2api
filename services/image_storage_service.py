@@ -18,7 +18,12 @@ from PIL import Image, ImageOps
 from services.config import DATA_DIR, config
 from services.image_failure import ImageFailureError, image_failure
 from services.json_file import read_json_object, write_json_file
+from services.r2_client import CloudflareR2Client, R2Error
 from services.storage.file_lock import interprocess_lock
+from services.storage.image_storage_target_repository import (
+    ImageStorageTarget,
+    image_storage_target_repository,
+)
 from utils.timezone import beijing_datetime_from_timestamp, beijing_now, beijing_now_str
 
 IMAGE_INDEX_FILE = DATA_DIR / "image_index.json"
@@ -63,6 +68,13 @@ class DeleteMutationResult:
 
 def _clean(value: object) -> str:
     return str(value or "").strip()
+
+
+def _indexed_size(item: dict[str, object]) -> int:
+    try:
+        return max(0, int(item.get("size") or 0))
+    except (TypeError, ValueError, OverflowError):
+        return 0
 
 
 def _raise_if_save_deadline_elapsed(deadline_monotonic: float | None) -> None:
@@ -267,6 +279,71 @@ class ImageStorageService:
     def mode(self) -> str:
         return _clean(self.settings().get("mode")) or "local"
 
+    def _r2_targets(self) -> list[ImageStorageTarget]:
+        image_storage_target_repository.ensure_legacy_target(self.settings())
+        targets = image_storage_target_repository.list(enabled_only=True)
+        usage = self._r2_target_usage()
+        targets.sort(key=lambda target: (usage.get(target.id, 0), target.id))
+        return targets
+
+    def _r2_target_usage(self) -> dict[str, int]:
+        with self._index_guard():
+            indexed = self._load_clean_index()
+        usage: dict[str, int] = {}
+        for item in indexed.values():
+            target_id = _clean(item.get("r2_storage_id"))
+            if target_id:
+                usage[target_id] = usage.get(target_id, 0) + _indexed_size(item)
+        return usage
+
+    @staticmethod
+    def _r2_key(target: ImageStorageTarget, rel: str) -> str:
+        return f"{target.prefix.rstrip('/')}/{normalize_image_relative_path(rel)}"
+
+    @staticmethod
+    def _r2_url(target: ImageStorageTarget, key: str) -> str:
+        if not target.public_base_url:
+            return ""
+        return f"{target.public_base_url.rstrip('/')}/{quote(key, safe='/')}"
+
+    @staticmethod
+    def _r2_url_for_item(item: dict[str, object]) -> str:
+        return _clean(item.get("remote_url")) if _clean(item.get("r2_storage_id")) else ""
+
+    @staticmethod
+    def _r2_client(target: ImageStorageTarget) -> CloudflareR2Client:
+        return CloudflareR2Client(target.client_settings(), timeout=float(target.upload_timeout_secs))
+
+    def _write_local_fallback(
+        self,
+        rel: str,
+        image_data: bytes,
+        dimensions: tuple[int, int] | None,
+        error: str,
+    ) -> dict[str, object]:
+        path = image_local_path(rel)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(image_data)
+        item: dict[str, object] = {
+            "rel": rel,
+            "path": rel,
+            "name": path.name,
+            "date": "-".join(rel.split("/")[:3]),
+            "size": len(image_data),
+            "created_at": _now_iso(),
+            "storage": "local",
+            "local": True,
+            "webdav": False,
+            "r2": False,
+            "remote_url": "",
+            "generation": self._new_generation(),
+            "r2_sync_pending": True,
+            "r2_error": error[:512],
+        }
+        if dimensions:
+            item["width"], item["height"] = dimensions
+        return item
+
     def _load_index(self) -> dict[str, dict[str, object]]:
         raw = _read_json_object(self.index_file)
         items = raw.get("items")
@@ -286,6 +363,8 @@ class ImageStorageService:
                 item["local"] = True
             if "webdav" not in item and storage in {"webdav", "both"}:
                 item["webdav"] = True
+            if "r2" not in item and _clean(item.get("r2_storage_id")):
+                item["r2"] = True
             clean[rel] = item
         return clean
 
@@ -405,6 +484,91 @@ class ImageStorageService:
             f"{normalize_image_relative_path(rel)}"
         )
 
+    def r2_target_views(self) -> list[dict[str, object]]:
+        settings = self.settings()
+        image_storage_target_repository.ensure_legacy_target(settings)
+        with self._index_guard():
+            indexed = self._load_clean_index()
+        usage: dict[str, tuple[int, int]] = {}
+        for asset in indexed.values():
+            target_id = _clean(asset.get("r2_storage_id"))
+            if not target_id:
+                continue
+            size = _indexed_size(asset)
+            total, count = usage.get(target_id, (0, 0))
+            usage[target_id] = (total + size, count + 1)
+        result = []
+        for target in image_storage_target_repository.list():
+            item = target.public_dict()
+            item["legacy"] = target.id == "legacy-default"
+            used_bytes, asset_count = usage.get(target.id, (0, 0))
+            item["used_bytes"] = used_bytes
+            item["object_count"] = asset_count
+            item["asset_count"] = asset_count
+            item["can_delete"] = target.id != "legacy-default" and asset_count == 0
+            result.append(item)
+        return result
+
+    def save_r2_target(self, payload: dict[str, object]) -> dict[str, object]:
+        target_id = _clean(payload.get("id"))
+        existing = image_storage_target_repository.get(target_id) if target_id else None
+        if existing is not None:
+            with self._index_guard():
+                in_use = any(
+                    _clean(item.get("r2_storage_id")) == existing.id
+                    for item in self._load_clean_index().values()
+                )
+            protected = ("account_id", "bucket", "prefix", "public_base_url")
+            if in_use and any(
+                key in payload
+                and _clean(payload.get(key)) != _clean(getattr(existing, key))
+                for key in protected
+            ):
+                raise ImageStorageError("该 R2 目标仍保存有图片，不能更改 Account ID、Bucket、对象前缀或公开访问地址")
+        try:
+            saved = image_storage_target_repository.save(payload)
+        except ValueError as exc:
+            raise ImageStorageError(str(exc)) from exc
+        for item in self.r2_target_views():
+            if item.get("id") == saved.id:
+                return item
+        raise ImageStorageError("R2 图片存储目标保存后无法读取")
+
+    def get_r2_target(self, target_id: str) -> ImageStorageTarget | None:
+        return image_storage_target_repository.get(_clean(target_id))
+
+    def delete_r2_target(self, target_id: str) -> bool:
+        with self._index_guard():
+            in_use = any(
+                _clean(item.get("r2_storage_id")) == target_id
+                for item in self._load_clean_index().values()
+            )
+        if in_use:
+            raise ImageStorageError("该 R2 目标仍保存有图片，不能删除")
+        try:
+            return image_storage_target_repository.delete(target_id)
+        except ValueError as exc:
+            raise ImageStorageError(str(exc)) from exc
+
+    def test_r2_target(self, target_id: str) -> dict[str, object]:
+        target = image_storage_target_repository.get(target_id)
+        if target is None:
+            raise ImageStorageError("R2 图片存储目标不存在")
+        client = self._r2_client(target)
+        try:
+            result = client.test_connection()
+            image_storage_target_repository.update_health(target.id, status="healthy")
+            return result
+        except Exception as exc:
+            image_storage_target_repository.update_health(
+                target.id,
+                status="error",
+                error=str(exc) or exc.__class__.__name__,
+            )
+            return {"ok": False, "status": 0, "error": str(exc) or exc.__class__.__name__}
+        finally:
+            client.close()
+
     def make_relative_path(self, image_data: bytes) -> str:
         file_hash = hashlib.md5(image_data).hexdigest()
         filename = f"{int(time.time())}_{file_hash}.png"
@@ -426,11 +590,14 @@ class ImageStorageService:
             # deadline cannot leave an unindexed local or remote asset behind.
             _raise_if_save_deadline_elapsed(deadline_monotonic)
             mode = self.mode()
-            if mode not in {"local", "webdav", "both"}:
+            if mode not in {"local", "webdav", "both", "r2"}:
                 mode = "local"
             stored_local = False
             stored_webdav = False
             remote_url = ""
+            r2_target: ImageStorageTarget | None = None
+            r2_key = ""
+            r2_error = ""
 
             if mode in {"local", "both"}:
                 path = image_local_path(rel)
@@ -446,22 +613,53 @@ class ImageStorageService:
                 finally:
                     client.session.close()
 
+            if mode == "r2":
+                targets = self._r2_targets()
+                if not targets:
+                    r2_error = "未配置可用的 R2 图片存储目标"
+                for target in targets:
+                    client = self._r2_client(target)
+                    r2_key = self._r2_key(target, rel)
+                    try:
+                        client.upload_bytes(r2_key, image_data, content_type="image/png")
+                        image_storage_target_repository.update_health(target.id, status="healthy")
+                        r2_target = target
+                        remote_url = self._r2_url(target, r2_key)
+                        break
+                    except Exception as exc:
+                        r2_error = str(exc) or exc.__class__.__name__
+                        image_storage_target_repository.update_health(
+                            target.id,
+                            status="error",
+                            error=r2_error,
+                        )
+                    finally:
+                        client.close()
+
             dimensions = _image_dimensions(image_data)
-            item = {
-                "rel": rel,
-                "path": rel,
-                "name": Path(rel).name,
-                "date": "-".join(rel.split("/")[:3]),
-                "size": len(image_data),
-                "created_at": _now_iso(),
-                "storage": "both" if stored_local and stored_webdav else ("webdav" if stored_webdav else "local"),
-                "local": stored_local,
-                "webdav": stored_webdav,
-                "remote_url": remote_url,
-                "generation": self._new_generation(),
-            }
-            if dimensions:
-                item["width"], item["height"] = dimensions
+            if mode == "r2" and r2_target is None:
+                item = self._write_local_fallback(rel, image_data, dimensions, r2_error)
+            else:
+                item = {
+                    "rel": rel,
+                    "path": rel,
+                    "name": Path(rel).name,
+                    "date": "-".join(rel.split("/")[:3]),
+                    "size": len(image_data),
+                    "created_at": _now_iso(),
+                    "storage": "both" if stored_local and stored_webdav else ("webdav" if stored_webdav else "local"),
+                    "local": stored_local,
+                    "webdav": stored_webdav,
+                    "r2": r2_target is not None,
+                    "remote_url": remote_url,
+                    "generation": self._new_generation(),
+                }
+                if r2_target is not None:
+                    item["r2_storage_id"] = r2_target.id
+                    item["r2_key"] = r2_key
+                    item["storage"] = "r2"
+                if dimensions:
+                    item["width"], item["height"] = dimensions
             with self._index_guard():
                 items = self._load_clean_index()
                 items[rel] = item
@@ -470,7 +668,7 @@ class ImageStorageService:
                 if rel in pending:
                     pending.pop(rel, None)
                     self._save_remote_delete_pending(pending)
-        return StoredImage(rel=rel, url=self._public_url(rel, base_url), storage=str(item["storage"]), size=len(image_data))
+        return StoredImage(rel=rel, url=remote_url or self._public_url(rel, base_url), storage=str(item["storage"]), size=len(image_data))
 
     def get_bytes(self, rel: str) -> bytes:
         safe_rel = normalize_image_relative_path(rel)
@@ -491,6 +689,18 @@ class ImageStorageService:
                 return client.get(safe_rel)
             finally:
                 client.session.close()
+        if bool(item.get("r2")) or _clean(item.get("r2_storage_id")):
+            target = image_storage_target_repository.get(_clean(item.get("r2_storage_id")))
+            if target is None:
+                raise HTTPException(status_code=404, detail="image not found")
+            client = self._r2_client(target)
+            try:
+                key = _clean(item.get("r2_key")) or self._r2_key(target, safe_rel)
+                return client.get_bytes(key)
+            except R2Error as exc:
+                raise HTTPException(status_code=404, detail="image not found") from exc
+            finally:
+                client.close()
         raise HTTPException(status_code=404, detail="image not found")
 
     def record_genbox_push(self, rel: str, *, status: str, sha256: str, updated_at: str) -> dict[str, str]:
@@ -549,7 +759,11 @@ class ImageStorageService:
         existing.update(
             safe_rel
             for safe_rel in remote_rels
-            if items.get(safe_rel, {}).get("webdav")
+            if (
+                items.get(safe_rel, {}).get("webdav")
+                or items.get(safe_rel, {}).get("r2")
+                or items.get(safe_rel, {}).get("r2_storage_id")
+            )
         )
         return existing
 
@@ -600,7 +814,7 @@ class ImageStorageService:
                     if target is not None and reclaimed >= target:
                         break
                     item = snapshot.get(safe_rel, {})
-                    if item.get("remote_sync_pending"):
+                    if item.get("remote_sync_pending") or item.get("r2_sync_pending"):
                         continue
                     path = image_local_path(safe_rel)
                     try:
@@ -624,7 +838,11 @@ class ImageStorageService:
                         LocalCopyRemoval(
                             rel=rel,
                             size=size,
-                            remote_remains=bool(snapshot.get(rel, {}).get("webdav")),
+                        remote_remains=bool(
+                            snapshot.get(rel, {}).get("webdav")
+                            or snapshot.get(rel, {}).get("r2")
+                            or snapshot.get(rel, {}).get("r2_storage_id")
+                        ),
                         )
                         for rel, size in selected
                     )
@@ -635,7 +853,13 @@ class ImageStorageService:
                     changed = False
                     for rel, size in selected:
                         item = items.get(rel)
-                        remote_remains = bool(item and item.get("webdav"))
+                        remote_remains = bool(
+                            item and (
+                                item.get("webdav")
+                                or item.get("r2")
+                                or item.get("r2_storage_id")
+                            )
+                        )
                         removals.append(LocalCopyRemoval(rel, size, remote_remains))
                         if item is None:
                             continue
@@ -643,7 +867,7 @@ class ImageStorageService:
                             items[rel] = {
                                 **item,
                                 "local": False,
-                                "storage": "webdav",
+                                "storage": "r2" if item.get("r2_storage_id") else "webdav",
                             }
                         else:
                             items.pop(rel, None)
@@ -725,19 +949,21 @@ class ImageStorageService:
                     local_path = image_local_path(rel)
                     local = local_path.is_file()
                     webdav = bool(item.get("webdav"))
-                    if not local and not webdav:
+                    r2 = bool(item.get("r2") or item.get("r2_storage_id"))
+                    if not local and not webdav and not r2:
                         indexed.pop(rel, None)
                         changed = True
                         continue
-                    storage = "both" if local and webdav else ("webdav" if webdav else "local")
+                    remote_storage = "r2" if r2 else ("webdav" if webdav else "")
+                    storage = "both" if local and remote_storage else (remote_storage or "local")
                     local_size: int | None = None
                     if local:
                         try:
                             local_size = local_path.stat().st_size
                         except OSError:
                             local = False
-                            storage = "webdav" if webdav else "local"
-                    if not local and not webdav:
+                            storage = remote_storage if remote_storage else "local"
+                    if not local and not webdav and not r2:
                         indexed.pop(rel, None)
                         changed = True
                         continue
@@ -763,7 +989,7 @@ class ImageStorageService:
                         }
                         if local_size is not None:
                             item["size"] = local_size
-                        if size_changed and webdav:
+                        if size_changed and (webdav or r2):
                             item["remote_sync_pending"] = True
                         indexed[rel] = item
                         changed = True
@@ -776,7 +1002,7 @@ class ImageStorageService:
                     **item,
                     "rel": rel,
                     "path": rel,
-                    "url": self._public_url(rel, base_url),
+                    "url": self._r2_url_for_item(item) or self._public_url(rel, base_url),
                 })
             if changed:
                 self._save_index(indexed)
@@ -816,6 +1042,7 @@ class ImageStorageService:
                         scope="asset",
                         remote=bool(
                             (item and item.get("webdav"))
+                            or (item and (item.get("r2") or item.get("r2_storage_id")))
                             or (existing and existing.get("remote"))
                         ),
                     )
@@ -856,27 +1083,47 @@ class ImageStorageService:
                         return DeleteMutationResult(completed=False, removed=False), exc
                 removed = True
 
-            if tombstone.get("remote"):
+            r2_storage_id = _clean(current.get("r2_storage_id")) if current else ""
+            has_webdav = bool(current and current.get("webdav"))
+            remote_failed = False
+            remote_error: Exception | None = None
+            if tombstone.get("remote") and r2_storage_id:
+                target = image_storage_target_repository.get(r2_storage_id)
+                if target is None:
+                    remote_failed = True
+                    remote_error = ImageStorageError("R2 图片存储目标不存在")
+                else:
+                    r2_client = self._r2_client(target)
+                    try:
+                        key = _clean(current.get("r2_key")) or self._r2_key(target, rel)
+                        r2_client.delete_object(key)
+                        removed = True
+                    except Exception as exc:
+                        remote_failed = True
+                        remote_error = exc
+                    finally:
+                        r2_client.close()
+
+            if tombstone.get("remote") and (has_webdav or not r2_storage_id):
                 if client is None:
-                    return (
-                        DeleteMutationResult(
-                            completed=removed,
-                            removed=removed,
-                            retry_remote=True,
-                        ),
-                        ImageStorageError("WebDAV client is unavailable"),
-                    )
-                try:
-                    removed = client.delete(rel) or removed
-                except Exception as exc:
-                    return (
-                        DeleteMutationResult(
-                            completed=removed,
-                            removed=removed,
-                            retry_remote=True,
-                        ),
-                        None if removed else exc,
-                    )
+                    remote_failed = True
+                    remote_error = remote_error or ImageStorageError("WebDAV client is unavailable")
+                else:
+                    try:
+                        removed = client.delete(rel) or removed
+                    except Exception as exc:
+                        remote_failed = True
+                        remote_error = remote_error or exc
+
+            if remote_failed:
+                return (
+                    DeleteMutationResult(
+                        completed=removed and not bool(r2_storage_id),
+                        removed=removed,
+                        retry_remote=True,
+                    ),
+                    None if removed else remote_error,
+                )
 
             return DeleteMutationResult(completed=True, removed=removed), None
 
@@ -937,7 +1184,20 @@ class ImageStorageService:
                     break
                 results: dict[str, DeleteMutationResult] = {}
                 batch_error: Exception | None = None
-                if client is None and any(bool(item.get("remote")) for item in planned.values()):
+                # R2 assets carry their own target identity.  Only construct a
+                # WebDAV client for entries that actually need the legacy
+                # WebDAV deletion path; an R2-only batch must not depend on
+                # unrelated WebDAV settings or session setup.
+                needs_webdav = False
+                if any(bool(item.get("remote")) for item in planned.values()):
+                    with self._index_guard():
+                        current_items = self._load_clean_index()
+                    needs_webdav = any(
+                        bool(item.get("remote"))
+                        and bool(current_items.get(rel, {}).get("webdav"))
+                        for rel, item in planned.items()
+                    )
+                if client is None and needs_webdav:
                     try:
                         client = WebDAVClient(self.settings())
                     except Exception as exc:
@@ -963,6 +1223,20 @@ class ImageStorageService:
                         if error is not None:
                             batch_error = error
                             break
+
+                if batch_error is not None:
+                    # Keep prepared tombstones for entries that were not
+                    # reached after a client/setup or remote mutation error.
+                    # They must be retried by the next delete or sync pass.
+                    for safe_rel in planned:
+                        results.setdefault(
+                            safe_rel,
+                            DeleteMutationResult(
+                                completed=False,
+                                removed=False,
+                                retry_remote=True,
+                            ),
+                        )
 
                 completed_rels.update(
                     rel for rel, result in results.items() if result.completed
@@ -1064,10 +1338,15 @@ class ImageStorageService:
                     for rel, update in batch_committed.items():
                         path = image_local_path(rel)
                         current = items.get(rel, {})
+                        webdav_exists = bool(current.get("webdav"))
+                        r2_exists = bool(current.get("r2") or current.get("r2_storage_id"))
                         remote_stale = bool(
-                            current.get("webdav") or current.get("remote_sync_pending")
+                            webdav_exists
+                            or r2_exists
+                            or current.get("remote_sync_pending")
+                            or current.get("r2_sync_pending")
                         )
-                        remote_exists = bool(current.get("webdav"))
+                        remote_exists = webdav_exists or r2_exists
                         item = {
                             **current,
                             "rel": rel,
@@ -1085,7 +1364,7 @@ class ImageStorageService:
                             "created_at": str(current.get("created_at") or _mtime_datetime(path)),
                             "storage": "both" if remote_exists else "local",
                             "local": True,
-                            "webdav": remote_exists,
+                            "webdav": webdav_exists,
                             "remote_url": str(current.get("remote_url") or ""),
                             "generation": self._item_generation(current) or self._new_generation(),
                         }
@@ -1096,6 +1375,8 @@ class ImageStorageService:
                             item["remote_sync_pending"] = True
                         else:
                             item.pop("remote_sync_pending", None)
+                        if r2_exists:
+                            item["r2_sync_pending"] = True
                         items[rel] = item
                     self._save_index(items)
             committed.update(batch_committed)
@@ -1393,9 +1674,198 @@ class ImageStorageService:
         finally:
             client.session.close()
 
+    def _sync_r2_all_locked(self) -> dict[str, int]:
+        image_storage_target_repository.ensure_legacy_target(self.settings())
+
+        with self._index_guard():
+            snapshot = self._load_clean_index()
+            pending_remote_deletes = self._load_remote_delete_pending()
+
+        targets = {
+            target.id: target
+            for target in image_storage_target_repository.list()
+        }
+        enabled_target_ids = {
+            target.id
+            for target in image_storage_target_repository.list(enabled_only=True)
+        }
+        target_usage = self._r2_target_usage()
+        image_root = config.images_dir
+        uploaded = 0
+        skipped = 0
+        failed = 0
+
+        pending_webdav_client: WebDAVClient | None = None
+        try:
+            for rel, tombstone in pending_remote_deletes.items():
+                item = snapshot.get(rel)
+                if (
+                    not item
+                    or _clean(tombstone.get("scope")) != "asset"
+                    or not tombstone.get("remote")
+                    or not self._asset_generation_matches(item, tombstone, allow_missing=False)
+                ):
+                    continue
+                needs_webdav = bool(item.get("webdav") or not _clean(item.get("r2_storage_id")))
+                if needs_webdav and pending_webdav_client is None:
+                    try:
+                        pending_webdav_client = WebDAVClient(self.settings())
+                    except Exception:
+                        pass
+                try:
+                    result, error = self._mutate_delete_tombstone(
+                        rel,
+                        tombstone,
+                        pending_webdav_client,
+                    )
+                    self._finalize_delete_batch({rel: tombstone}, {rel: result})
+                    if error is not None or not result.completed:
+                        failed += 1
+                except Exception:
+                    failed += 1
+        finally:
+            if pending_webdav_client is not None:
+                pending_webdav_client.session.close()
+
+        with self._index_guard():
+            snapshot = self._load_clean_index()
+            pending_remote_deletes = self._load_remote_delete_pending()
+        target_usage = self._r2_target_usage()
+
+        for path in sorted(image_root.rglob("*")):
+            if not path.is_file() or not _is_image_rel(path.name):
+                continue
+            rel = path.relative_to(image_root).as_posix()
+            original = snapshot.get(rel, {})
+            tombstone = pending_remote_deletes.get(rel)
+            if (
+                tombstone is not None
+                and _clean(tombstone.get("scope")) == "asset"
+                and self._asset_generation_matches(original or None, tombstone, allow_missing=True)
+            ):
+                continue
+
+            with self._item_guard(rel):
+                try:
+                    payload = path.read_bytes()
+                except OSError:
+                    failed += 1
+                    continue
+
+                with self._index_guard():
+                    current = self._load_clean_index().get(rel, {})
+                    tombstone = self._load_remote_delete_pending().get(rel)
+                if (
+                    tombstone is not None
+                    and _clean(tombstone.get("scope")) == "asset"
+                    and self._asset_generation_matches(current or None, tombstone, allow_missing=True)
+                ):
+                    continue
+
+                assigned_id = _clean(current.get("r2_storage_id"))
+                size_matches = _indexed_size(current) == len(payload)
+                has_pending = bool(current.get("r2_sync_pending") or current.get("remote_sync_pending"))
+                assigned = targets.get(assigned_id) if assigned_id else None
+                if assigned is not None and not has_pending and size_matches:
+                    skipped += 1
+                    continue
+
+                if assigned_id and assigned is not None:
+                    candidates = [assigned]
+                else:
+                    candidates = sorted(
+                        (target for target_id, target in targets.items() if target_id in enabled_target_ids),
+                        key=lambda target: (target_usage.get(target.id, 0), target.id),
+                    )
+
+                last_error = "未配置可用的 R2 图片存储目标"
+                selected: ImageStorageTarget | None = None
+                selected_key = ""
+                for target in candidates:
+                    if target is None:
+                        continue
+                    key = _clean(current.get("r2_key")) if target.id == assigned_id else ""
+                    key = key or self._r2_key(target, rel)
+                    client = self._r2_client(target)
+                    try:
+                        client.upload_bytes(key, payload, content_type="image/png")
+                        image_storage_target_repository.update_health(target.id, status="healthy")
+                        selected = target
+                        selected_key = key
+                        break
+                    except Exception as exc:
+                        last_error = str(exc) or exc.__class__.__name__
+                        image_storage_target_repository.update_health(
+                            target.id,
+                            status="error",
+                            error=last_error,
+                        )
+                    finally:
+                        client.close()
+
+                if selected is None:
+                    failed += 1
+                    with self._index_guard():
+                        items = self._load_clean_index()
+                        latest = items.get(rel)
+                        if latest is not None:
+                            latest["r2_sync_pending"] = True
+                            latest["r2_error"] = last_error[:512]
+                            items[rel] = latest
+                            self._save_index(items)
+                    continue
+
+                try:
+                    latest_payload = path.read_bytes()
+                except OSError:
+                    failed += 1
+                    continue
+                if hashlib.sha256(latest_payload).digest() != hashlib.sha256(payload).digest():
+                    failed += 1
+                    with self._index_guard():
+                        items = self._load_clean_index()
+                        latest = items.get(rel)
+                        if latest is not None:
+                            latest["r2_sync_pending"] = True
+                            latest["remote_sync_pending"] = True
+                            items[rel] = latest
+                            self._save_index(items)
+                    continue
+
+                with self._index_guard():
+                    items = self._load_clean_index()
+                    latest = items.get(rel, current)
+                    updated = {
+                        **latest,
+                        "rel": rel,
+                        "path": rel,
+                        "name": path.name,
+                        "size": len(payload),
+                        "storage": "both" if bool(latest.get("webdav")) else "r2",
+                        "local": True,
+                        "r2": True,
+                        "r2_storage_id": selected.id,
+                        "r2_key": selected_key,
+                        "remote_url": self._r2_url(selected, selected_key),
+                        "generation": self._item_generation(latest) or self._new_generation(),
+                    }
+                    updated.pop("r2_sync_pending", None)
+                    updated.pop("remote_sync_pending", None)
+                    updated.pop("r2_error", None)
+                    items[rel] = updated
+                    self._save_index(items)
+                target_usage[selected.id] = target_usage.get(selected.id, 0) + len(payload)
+                uploaded += 1
+
+        return {"uploaded": uploaded, "skipped": skipped, "failed": failed}
+
     def sync_all(self) -> dict[str, int]:
         settings = self.settings()
-        if self.mode() not in {"webdav", "both"}:
+        mode = self.mode()
+        if mode == "r2":
+            with interprocess_lock(self._sync_file_lock):
+                return self._sync_r2_all_locked()
+        if mode not in {"webdav", "both"}:
             raise ImageStorageError("WebDAV 图片存储未启用")
         with interprocess_lock(self._sync_file_lock):
             return self._sync_all_locked(settings)

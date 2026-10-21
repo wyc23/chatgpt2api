@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-v3.3.0-111827" alt="Version v3.3.0" />
+  <img src="https://img.shields.io/badge/version-v3.3.1-111827" alt="Version v3.3.1" />
   <img src="https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white" alt="Python 3.13" />
   <img src="https://img.shields.io/badge/Vue-3-4FC08D?logo=vue.js&logoColor=white" alt="Vue 3" />
   <img src="https://img.shields.io/badge/PostgreSQL-18-4169E1?logo=postgresql&logoColor=white" alt="PostgreSQL 18" />
@@ -20,7 +20,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/wyc23/chatgpt2api/releases/tag/v3.3.0">v3.3.0 Release</a>
+  <a href="https://github.com/wyc23/chatgpt2api/releases/tag/v3.3.1">v3.3.1 Release</a>
   · <a href="./CHANGELOG.md">更新说明</a>
   · <a href="./docs/README.md">维护文档</a>
 </p>
@@ -64,10 +64,10 @@ curl -fsSL https://raw.githubusercontent.com/yukkcat/chatgpt2api/main/deploy/ins
 
 安装时可选择 SQLite、本地 PostgreSQL 18 容器或已有 PostgreSQL URL。SQLite 无需额外配置；本地 PostgreSQL 由 Compose 自动启动并持久化。
 
-固定安装 `v3.3.0`：
+固定安装 `v3.3.1`：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/wyc23/chatgpt2api/v3.3.0/deploy/install.sh | sudo bash -s -- --branch v3.3.0
+curl -fsSL https://raw.githubusercontent.com/wyc23/chatgpt2api/v3.3.1/deploy/install.sh | sudo bash -s -- --branch v3.3.1
 ```
 
 ### Docker Compose
@@ -120,7 +120,7 @@ DATABASE_URL=postgresql://user:password@host:5432/database
 |   ⚙️   | 调度与并发 | 多账号选择、账号处理并发、单账号图片并发、多图并行、失败换号、额度与限流状态管理                               |
 |   🌐   | 代理出口   | 账号代理、账号组代理、多出口代理组、节点图片并发、轮换间隔、默认出口、备用出口和连通性检测                     |
 |   📊   | 日志与监控 | 调用日志、活跃请求、最近完成、慢请求、账号切换、出口信息、图片阶段时间线和原始上游诊断                         |
-|   🖼️   | 图片与文件 | 本地 / WebDAV 存储、图库、标签、缩略图、下载、ZIP、压缩、清理、PPT / PSD 产物和可选图片放大                    |
+|   🖼️   | 图片与文件 | 本地 / WebDAV / 多 R2 目标存储、图库、标签、缩略图、下载、ZIP、压缩、清理、PPT / PSD 产物和可选图片放大 |
 |   ✨   | 提示词库   | 本地提示词资产、云端来源同步、分类选择和更新状态管理                                                           |
 |   💾   | 数据与备份 | SQLite、PostgreSQL 18、R2 备份、保留策略，以及调用趋势、成功率和模型统计                                       |
 |   🖥️   | 管理控制台 | 概览、账号、代理、日志、实时监控、图片、对话画图和系统设置，适配桌面与移动端                                   |
@@ -137,7 +137,7 @@ flowchart LR
   Services --> Scheduler["账号调度与代理出口"]
   Scheduler --> Upstream["ChatGPT Web"]
   Services --> AppDB["Application Database<br/>SQLite / PostgreSQL 18"]
-  Services --> Assets["图片与生成文件<br/>本地 / WebDAV"]
+  Services --> Assets["图片与生成文件<br/>本地 / WebDAV / 多 R2 目标"]
   Services --> Monitor["进程内实时监控"]
   Services --> Backup["R2 备份"]
 ```

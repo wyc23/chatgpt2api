@@ -29,7 +29,7 @@ requirements may move to `archive/` after links and this index are updated.
 
 ## Active requirements
 
-No active PRDs are currently tracked.
+- [0001: Multiple R2 targets for image storage](0001-multiple-r2-image-storage.md) — pending-verification.
 
 PRDs are planning evidence, never proof that the product already behaves as
 described.

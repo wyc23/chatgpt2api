@@ -18,7 +18,8 @@
 | 提示词、远程导入和清理协调状态 | 各自领域 Repository | Application Database |
 | Editable File Task 元数据 | `EditableFileTaskService` 的任务 Repository | Application Database |
 | 图片任务 | `ImageTaskService` | `data/image_tasks.json` |
-| 图片索引与删除恢复状态 | `ImageStorageService` | `data/image_index.json`，实际图片可在本地或 WebDAV |
+| 图片索引与删除恢复状态 | `ImageStorageService` | `data/image_index.json`，实际图片可在本地、WebDAV 或 R2；R2 条目保存 target ID 和 object key |
+| 图片 R2 存储目标 | `ImageStorageTargetRepository` | Application Database 中的 `image_storage_targets` 表；保存目标凭据和健康投影 |
 | 图片标签和缩略图 | 图片领域 Module | `data/` 下的图片关联文件 |
 
 ## 数据库选择与切换
@@ -38,11 +39,14 @@
 - 所有领域 Repository 共享一个进程级 Engine，但不共享可变业务状态。
 - SQLite 使用 WAL、外键和 busy timeout；PostgreSQL 使用有界连接池。
 - `ImageStorageService` 统一图片保存、删除、压缩、清理和同步；调用方不能直接改图片索引。
-- 图片删除先记录可恢复的删除状态，再执行本地或 WebDAV 操作，避免中断后旧操作误删新版本。
+- 图片删除先记录可恢复的删除状态，再执行本地或 WebDAV/R2 远程操作，避免中断后旧操作误删新版本。
 
 备份需要同时覆盖 Application Database 与图片/文件资产位置。只备份数据库不能
-恢复本地或 WebDAV 图片和生成文件；只备份 `data/` 也不能恢复外部 PostgreSQL。
+恢复本地、WebDAV 或 R2 图片和生成文件；只备份 `data/` 也不能恢复外部 PostgreSQL。
 内置 R2 备份始终生成一致的数据库快照：SQLite 归档为
 `data/application-database.sqlite3`，PostgreSQL 归档为
 `data/application-database.pgdump`。PostgreSQL 部署镜像包含 `pg_dump`；WebDAV
-资产不属于 Application Database，仍由部署方独立备份。
+资产不属于 Application Database，仍由部署方独立备份。图片 R2 目标与备份 R2
+目标彼此独立；备份服务继续只使用一套 `backup` R2 配置，不会把图片目标列表当作
+备份目标。备份归档不会主动拉取 R2 图片对象；`images` 选项包含本地图片和标签，图库
+索引随 `image_tasks` 选项归档。

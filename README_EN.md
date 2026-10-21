@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-v3.3.0-111827" alt="Version v3.3.0" />
+  <img src="https://img.shields.io/badge/version-v3.3.1-111827" alt="Version v3.3.1" />
   <img src="https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white" alt="Python 3.13" />
   <img src="https://img.shields.io/badge/Vue-3-4FC08D?logo=vue.js&logoColor=white" alt="Vue 3" />
   <img src="https://img.shields.io/badge/PostgreSQL-18-4169E1?logo=postgresql&logoColor=white" alt="PostgreSQL 18" />
@@ -20,7 +20,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/wyc23/chatgpt2api/releases/tag/v3.3.0">v3.3.0 Release</a>
+  <a href="https://github.com/wyc23/chatgpt2api/releases/tag/v3.3.1">v3.3.1 Release</a>
   · <a href="./CHANGELOG.md">Changelog</a>
   · <a href="./docs/README.md">Documentation</a>
 </p>
@@ -45,10 +45,10 @@ curl -fsSL https://raw.githubusercontent.com/yukkcat/chatgpt2api/main/deploy/ins
 
 The installer lets you choose SQLite, a local PostgreSQL 18 container, or an existing PostgreSQL URL. SQLite requires no additional service. Local PostgreSQL is started and persisted automatically through Compose.
 
-To install the fixed `v3.3.0` release:
+To install the fixed `v3.3.1` release:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/wyc23/chatgpt2api/v3.3.0/deploy/install.sh | sudo bash -s -- --branch v3.3.0
+curl -fsSL https://raw.githubusercontent.com/wyc23/chatgpt2api/v3.3.1/deploy/install.sh | sudo bash -s -- --branch v3.3.1
 ```
 
 ### Docker Compose
@@ -105,7 +105,7 @@ Shared UI components, themes, and interaction primitives come from [yukkcat/nano
 | ⚙️ | Scheduling and concurrency | Multi-account selection, account-processing concurrency, per-account image concurrency, parallel images, account switching, quotas, and rate-limit state |
 | 🌐 | Proxy egress | Account and account-group proxies, multi-egress proxy groups, per-node image concurrency, rotation, default and fallback egress, and connectivity checks |
 | 📊 | Logs and monitoring | Persisted call records, active requests, recent and slow requests, account switches, egress details, image stage timelines, and raw upstream diagnostics |
-| 🖼️ | Images and files | Local/WebDAV storage, gallery, tags, thumbnails, downloads, ZIP archives, compression, cleanup, PPT/PSD artifacts, and optional image upscaling |
+| 🖼️ | Images and files | Local/WebDAV/multiple-R2-target storage, gallery, tags, thumbnails, downloads, ZIP archives, compression, cleanup, PPT/PSD artifacts, and optional image upscaling |
 | ✨ | Prompt library | Local prompt assets, cloud-source synchronization, categorized selection, and source health |
 | 💾 | Data and backups | SQLite, PostgreSQL 18, R2 backups, retention policies, request trends, success rates, and model metrics |
 | 🖥️ | Admin console | Dashboard, accounts, proxies, logs, real-time monitoring, gallery, chat and image studio, and settings on desktop and mobile |
@@ -122,7 +122,7 @@ flowchart LR
   Services --> Scheduler["Account scheduling and proxy egress"]
   Scheduler --> Upstream["ChatGPT Web"]
   Services --> AppDB["Application Database<br/>SQLite / PostgreSQL 18"]
-  Services --> Assets["Images and generated files<br/>Local / WebDAV"]
+  Services --> Assets["Images and generated files<br/>Local / WebDAV / multiple R2 targets"]
   Services --> Monitor["In-process real-time monitor"]
   Services --> Backup["R2 backup"]
 ```

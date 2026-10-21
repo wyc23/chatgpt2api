@@ -6,9 +6,9 @@ status: accepted
 
 `ImageStorageService` owns primary **Image Asset** mutations and their catalog effects. Callers request save, delete, cleanup, compression, and synchronization through this module instead of changing image files or catalog rows directly. Each catalog item has a non-reusable `generation`; a path alone is not an asset identity.
 
-Deletion persists a tombstone containing an operation ID, expected generation, scope, and remote-delete intent before local or WebDAV deletion begins. Destructive work holds only the current asset lock, including while WebDAV is in flight. Preparation and catalog merge batches contain at most 16 assets. Final catalog removal and tombstone cleanup compare both operation ID and generation, so an interrupted old delete cannot remove or clear recovery state for a newer asset at the same path.
+Deletion persists a tombstone containing an operation ID, expected generation, scope, and remote-delete intent before local or WebDAV/R2 deletion begins. Destructive work holds only the current asset lock, including while a remote delete is in flight. Preparation and catalog merge batches contain at most 16 assets. Final catalog removal and tombstone cleanup compare both operation ID and generation, so an interrupted old delete cannot remove or clear recovery state for a newer asset at the same path.
 
-The current catalog implementation remains JSON while mutation rules are consolidated. A database or other catalog adapter is considered only after callers no longer bypass the module; otherwise changing persistence would preserve the same split ownership and concurrency defects behind a new storage format.
+The current catalog implementation remains JSON while mutation rules are consolidated. R2 target credentials and health are a separate Application Database repository, while the asset catalog and object identity remain owned by this module. A database or other catalog adapter is considered only after callers no longer bypass the module; otherwise changing persistence would preserve the same split ownership and concurrency defects behind a new storage format.
 
 ## Consequences
 

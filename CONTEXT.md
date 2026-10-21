@@ -52,6 +52,10 @@ _Avoid_: Chat response, generic failure
 A generated or edited image exposed by URL or base64 data and optionally indexed by the gallery.
 _Avoid_: Image task
 
+**Image Storage Target**:
+A configured external R2 bucket used for Image Assets. Target configuration and health belong to their own Application Database repository; each R2-backed gallery entry records the target ID and object key needed to read or delete the asset.
+_Avoid_: Backup target, generic storage provider
+
 **Editable File Task**:
 An owner-scoped asynchronous PPT or PSD generation request whose terminal result exposes a primary editable file and a ZIP archive.
 _Avoid_: Image task, chat attachment
@@ -114,6 +118,7 @@ _Avoid_: A global repository for settings, logs, images, and task state
 - An **Upstream Account** owns one set of **Upstream Credentials**; the Refresh Token renews the Access Token, while account and quota synchronization is a separate operation.
 - **Account Processing Concurrency** limits remote maintenance per active **Upstream Account** and reserves one slot for each complete local atomic account batch; it does not limit Image Task execution slots.
 - An **Image Task** produces zero or more **Image Assets** and exposes one terminal result.
+- An R2-backed **Image Asset** references one **Image Storage Target** through the gallery index; the target's credentials live in the Application Database, while the image object remains in R2.
 - An **Editable File Task** publishes one primary **Editable File Asset** and one ZIP **Editable File Asset** when it succeeds; asset reads do not depend on retaining the task record.
 - An image call contains one or more **Image Attempts**; an **Account Switch** links consecutive attempts but is not itself a terminal result.
 - A completed public invocation produces one **Call Record**, while an **Active Request** exists only during the live request window.
