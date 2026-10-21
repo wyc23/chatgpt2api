@@ -71,6 +71,39 @@ terminal state. `ImageStorageService` exclusively owns Image Asset catalogue and
 storage mutations. Studio owns browser conversation presentation and polling,
 not task truth.
 
+## Image Asset storage
+
+```mermaid
+sequenceDiagram
+    participant Caller as Image API or Studio
+    participant Assets as ImageStorageService
+    participant Targets as ImageStorageTargetRepository
+    participant Local as Local image files
+    participant Remote as WebDAV or selected R2 target
+    participant Index as data/image_index.json
+
+    Caller->>Assets: Save Image Asset
+    Assets->>Targets: Resolve enabled R2 targets when mode is R2
+    Assets->>Remote: Upload using selected target and object key
+    alt Remote upload succeeds
+        Assets->>Index: Commit target ID, key, URL, and storage state
+    else R2 targets fail
+        Assets->>Local: Keep local fallback
+        Assets->>Index: Commit pending R2 synchronization state
+    end
+    Caller->>Assets: Read, delete, compress, or sync asset
+    Assets->>Index: Read authoritative asset identity
+    Assets->>Remote: Address recorded WebDAV/R2 object when needed
+    Assets->>Index: Commit catalog and retry/tombstone state
+```
+
+`ImageStorageService` owns target selection, exact object-key reuse, local
+fallback, remote reads/deletes, compression reconciliation, and full sync.
+Image Storage Targets are configuration in the Application Database; Image
+Assets and their gallery index remain outside that database. Disabling a target
+does not invalidate existing asset references, and deleting a referenced target
+is rejected. Backup R2 remains a separate single-target flow.
+
 ## Call Record, live monitor, and metrics
 
 ```mermaid

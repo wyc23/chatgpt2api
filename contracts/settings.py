@@ -9,7 +9,7 @@ from contracts.settings_specification import numeric_setting_spec
 
 LogLevel = Literal["debug", "info", "warning", "error"]
 ImageUpscaleEngine = Literal["sharp_lanczos3", "pillow_lanczos"]
-ImageStorageMode = Literal["local", "webdav", "both"]
+ImageStorageMode = Literal["local", "webdav", "both", "r2"]
 ProxyRuntimeClearanceMode = Literal["none", "manual", "flaresolverr"]
 SettingsFieldSource = Literal["default", "configured", "environment"]
 
@@ -71,6 +71,77 @@ class ImageStorageSettings(_ImageStorageFields):
 
 class ImageStoragePatch(_ImageStorageFields):
     pass
+
+
+class ImageStorageTargetCreateRequest(_StrictModel):
+    name: str = Field(default="R2 图片存储", min_length=1, max_length=160)
+    enabled: bool = True
+    account_id: str = Field(min_length=1, max_length=128)
+    bucket: str = Field(min_length=1, max_length=255)
+    access_key_id: str = Field(min_length=1, max_length=256)
+    secret_access_key: str = Field(min_length=1, max_length=4096)
+    prefix: str = Field(default="images", max_length=512)
+    public_base_url: str = Field(default="", max_length=2048)
+    upload_timeout_secs: int = Field(default=60, ge=5, le=300)
+
+
+class ImageStorageTargetPatchRequest(_StrictModel):
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+    enabled: bool | None = None
+    account_id: str | None = Field(default=None, min_length=1, max_length=128)
+    bucket: str | None = Field(default=None, min_length=1, max_length=255)
+    access_key_id: str | None = Field(default=None, min_length=1, max_length=256)
+    secret_access_key: str | None = Field(default=None, min_length=1, max_length=4096)
+    prefix: str | None = Field(default=None, max_length=512)
+    public_base_url: str | None = Field(default=None, max_length=2048)
+    upload_timeout_secs: int | None = Field(default=None, ge=5, le=300)
+
+
+class ImageStorageTargetView(_StrictModel):
+    id: str
+    name: str
+    enabled: bool
+    account_id: str
+    bucket: str
+    access_key_id: str
+    prefix: str
+    public_base_url: str
+    signed_url_expiry_minutes: int
+    upload_timeout_secs: int
+    used_bytes: int
+    object_count: int
+    reserved_bytes: int
+    capacity_checked_at: str | None = None
+    capacity_error: str = ""
+    health_status: str
+    has_secret_access_key: bool
+    asset_count: int
+    legacy: bool
+    can_delete: bool
+
+
+class ImageStorageTargetsView(_StrictModel):
+    targets: list[ImageStorageTargetView] = Field(default_factory=list)
+
+
+class ImageStorageTargetMutation(_StrictModel):
+    target: ImageStorageTargetView
+
+
+class ImageStorageTargetTestView(_StrictModel):
+    ok: bool
+    status: int = 0
+    target_id: str = ""
+    error: str | None = None
+
+
+class ImageStorageTargetTestResult(_StrictModel):
+    result: ImageStorageTargetTestView
+
+
+class ImageStorageTargetDeleteResult(_StrictModel):
+    deleted: bool
+    id: str
 
 
 class _GenBoxPushFields(_StrictModel):

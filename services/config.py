@@ -167,7 +167,7 @@ def _normalize_backup_settings(value: object) -> dict[str, object]:
 def _normalize_image_storage_settings(value: object) -> dict[str, object]:
     source = value if isinstance(value, dict) else {}
     mode = str(source.get("mode") or "local").strip().lower()
-    if mode not in {"local", "webdav", "both"}:
+    if mode not in {"local", "webdav", "both", "r2"}:
         mode = "local"
     enabled = _normalize_bool(source.get("enabled"), False)
     if not enabled:
@@ -183,6 +183,13 @@ def _normalize_image_storage_settings(value: object) -> dict[str, object]:
         "webdav_password": str(source.get("webdav_password") or "").strip(),
         "webdav_root_path": root_path or str(DEFAULT_IMAGE_STORAGE["webdav_root_path"]),
         "public_base_url": str(source.get("public_base_url") or "").strip().rstrip("/"),
+        # Retained only for migrating the pre-target single R2 configuration.
+        "r2_account_id": str(source.get("r2_account_id") or "").strip(),
+        "r2_access_key_id": str(source.get("r2_access_key_id") or "").strip(),
+        "r2_secret_access_key": str(source.get("r2_secret_access_key") or "").strip(),
+        "r2_bucket": str(source.get("r2_bucket") or "").strip(),
+        "r2_prefix": str(source.get("r2_prefix") or "images").strip().strip("/") or "images",
+        "r2_public_base_url": str(source.get("r2_public_base_url") or "").strip().rstrip("/"),
     })
     return normalized
 
@@ -392,10 +399,12 @@ def _promote_legacy_basic_settings(data: dict[str, object]) -> dict[str, object]
 def _validate_image_storage_settings(settings: dict[str, object]) -> None:
     if not _normalize_bool(settings.get("enabled"), False):
         return
-    if not str(settings.get("webdav_url") or "").strip():
-        raise ValueError("启用 WebDAV 图片存储后必须填写 WebDAV URL")
-    if not str(settings.get("webdav_password") or "").strip():
-        raise ValueError("启用 WebDAV 图片存储后必须填写 WebDAV 密码")
+    mode = str(settings.get("mode") or "local").strip().lower()
+    if mode in {"webdav", "both"}:
+        if not str(settings.get("webdav_url") or "").strip():
+            raise ValueError("启用 WebDAV 图片存储后必须填写 WebDAV URL")
+        if not str(settings.get("webdav_password") or "").strip():
+            raise ValueError("启用 WebDAV 图片存储后必须填写 WebDAV 密码")
 
 
 def _validate_genbox_push_settings(settings: dict[str, object]) -> None:

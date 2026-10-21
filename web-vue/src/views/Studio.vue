@@ -750,7 +750,9 @@ function openPromptPicker() {
 function applyPromptTemplate(prompt: PromptLibraryItem) {
   composerText.value = prompt.prompt
   if (composeMode.value === 'image') {
-    if (prompt.image_model) imageForm.model = prompt.image_model
+    if (prompt.image_model && imageModelOptions.value.includes(prompt.image_model)) {
+      imageForm.model = prompt.image_model
+    }
     if (prompt.image_size) imageForm.size = prompt.image_size
     if (prompt.image_count && prompt.image_count > 0) imageForm.n = prompt.image_count
   }

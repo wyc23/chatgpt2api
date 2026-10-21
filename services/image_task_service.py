@@ -1001,6 +1001,19 @@ class ImageTaskService:
         changed = False
         for task in self._tasks.values():
             if task.get("status") in UNFINISHED_STATUSES:
+                data = task.get("data")
+                has_result = isinstance(data, list) and any(
+                    isinstance(item, dict)
+                    and any(str(item.get(key) or "").strip() for key in ("b64_json", "url", "path"))
+                    for item in data
+                )
+                if has_result:
+                    task["status"] = TASK_STATUS_SUCCESS
+                    task["error"] = ""
+                    task.update(_clear_task_details())
+                    task["updated_at"] = _now_iso()
+                    changed = True
+                    continue
                 raw_error = "image task interrupted by service restart"
                 public_error, _, details = _normalize_task_failure(
                     ImageFailureError(

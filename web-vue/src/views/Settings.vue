@@ -86,8 +86,22 @@
         :fields="settingsFields"
         :image-storage-busy="imageStorageBusy"
         :image-storage-test-result="imageStorageTestResult"
+        :image-storage-targets="imageStorageTargets"
+        :image-storage-targets-loading="imageStorageTargetsLoading"
+        :image-storage-targets-error="imageStorageTargetsError"
+        :image-storage-target-modal="imageStorageTargetModal"
+        :image-storage-target-form="imageStorageTargetForm"
+        :image-storage-target-test-result="imageStorageTargetTestResult"
         @test-storage="testImageStorageConnection"
         @sync-storage="syncImageStorageFiles"
+        @load-targets="loadImageStorageTargets"
+        @create-target="openCreateImageStorageTarget"
+        @edit-target="openEditImageStorageTarget"
+        @toggle-target="toggleImageStorageTarget"
+        @delete-target="deleteImageStorageTarget"
+        @test-target="testImageStorageTarget"
+        @close-target-modal="closeImageStorageTargetModal"
+        @save-target="saveImageStorageTarget"
       />
 
       <SettingsPromptSourcesPanel
@@ -342,6 +356,7 @@ const USER_KEYS_REQUEST_KEY = 'settings:user-keys'
 const BACKUPS_REQUEST_KEY = 'settings:backups'
 const CPA_POOLS_REQUEST_KEY = 'settings:cpa-pools'
 const SUB2API_SERVERS_REQUEST_KEY = 'settings:sub2api-servers'
+const IMAGE_STORAGE_TARGETS_REQUEST_KEY = 'settings:image-storage-targets'
 
 const settingsConfigRuntime = useSettingsConfigRuntime({
   runtime: pageRuntime,
@@ -488,13 +503,32 @@ const sensitiveWordsText = computed({
   },
 })
 
-const imageStorageRuntime = useSettingsImageStorageRuntime({ requireSavedSettings })
+const imageStorageRuntime = useSettingsImageStorageRuntime({
+  runtime: pageRuntime,
+  requestKey: IMAGE_STORAGE_TARGETS_REQUEST_KEY,
+  requireSavedSettings,
+})
 const imageStorageBusy = imageStorageRuntime.imageStorageBusy
 const imageStorageTestResult = imageStorageRuntime.imageStorageTestResult
+const imageStorageTargets = imageStorageRuntime.imageStorageTargets
+const imageStorageTargetsLoaded = imageStorageRuntime.imageStorageTargetsLoaded
+const imageStorageTargetsLoading = imageStorageRuntime.imageStorageTargetsLoading
+const imageStorageTargetsError = imageStorageRuntime.imageStorageTargetsError
+const imageStorageTargetModal = imageStorageRuntime.imageStorageTargetModal
+const imageStorageTargetForm = imageStorageRuntime.imageStorageTargetForm
+const imageStorageTargetTestResult = imageStorageRuntime.imageStorageTargetTestResult
 const imageStorageOperationProgress = imageStorageRuntime.operationProgress
 const closeImageStorageOperationProgress = imageStorageRuntime.closeOperationProgress
 const testImageStorageConnection = imageStorageRuntime.testImageStorageConnection
 const syncImageStorageFiles = imageStorageRuntime.syncImageStorageFiles
+const loadImageStorageTargets = imageStorageRuntime.loadImageStorageTargets
+const openCreateImageStorageTarget = imageStorageRuntime.openCreateImageStorageTarget
+const openEditImageStorageTarget = imageStorageRuntime.openEditImageStorageTarget
+const closeImageStorageTargetModal = imageStorageRuntime.closeImageStorageTargetModal
+const saveImageStorageTarget = imageStorageRuntime.saveImageStorageTarget
+const toggleImageStorageTarget = imageStorageRuntime.toggleImageStorageTarget
+const deleteImageStorageTarget = imageStorageRuntime.deleteImageStorageTarget
+const testImageStorageTarget = imageStorageRuntime.testImageStorageTarget
 const settingsFields = computed<SettingsFields>(() => settingsStore.view?.fields || {})
 const fieldReadOnly = (path: string) => settingsFieldReadOnly(settingsFields.value, path)
 const fieldMetadata = (path: string) => settingsFields.value[path]
@@ -674,6 +708,11 @@ useSettingsTabRuntime({
       load: loadBackups,
     },
     {
+      tabs: ['storage'],
+      loaded: imageStorageTargetsLoaded,
+      load: loadImageStorageTargets,
+    },
+    {
       tabs: ['cpa', 'sub2api'],
       loaded: externalSourcesLoaded,
       load: loadExternalSources,
@@ -683,6 +722,7 @@ useSettingsTabRuntime({
     settingsConfigRuntime.invalidate,
     userKeysRuntime.invalidate,
     backupRuntime.invalidate,
+    imageStorageRuntime.invalidate,
     externalSourcesRuntime.invalidate,
   ],
   shouldSkipActivateReload: () => Boolean(
@@ -690,6 +730,7 @@ useSettingsTabRuntime({
     isSaving.value ||
     settingsStore.isLoading ||
     imageStorageBusy.value ||
+    imageStorageTargetModal.value ||
     backupBusy.value ||
     savingExternalSource.value ||
     testingExternalSource.value ||

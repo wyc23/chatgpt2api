@@ -98,7 +98,7 @@ export interface Settings {
   }
   image_storage: {
     enabled: boolean
-    mode: 'local' | 'webdav' | 'both'
+    mode: 'local' | 'webdav' | 'both' | 'r2'
     webdav_url: string
     webdav_username: string
     webdav_password: string
@@ -395,7 +395,7 @@ export interface DashboardResponse {
     application_database: Record<string, unknown>
     image_storage: {
       enabled: boolean
-      mode: 'local' | 'webdav' | 'both'
+      mode: 'local' | 'webdav' | 'both' | 'r2'
       status: 'not_checked'
       available: boolean | null
       image_count: number | null

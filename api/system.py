@@ -32,6 +32,12 @@ from contracts.proxy import (
     ProxyView,
 )
 from contracts.settings import (
+    ImageStorageTargetCreateRequest,
+    ImageStorageTargetDeleteResult,
+    ImageStorageTargetMutation,
+    ImageStorageTargetPatchRequest,
+    ImageStorageTargetTestResult,
+    ImageStorageTargetsView,
     PublicThirdPartyAppsView,
     SettingsMutationResult,
     SettingsPatch,
@@ -556,6 +562,83 @@ def create_router(app_version: str) -> APIRouter:
             return {"result": await run_in_threadpool(image_storage_service.sync_all)}
         except ImageStorageError as exc:
             raise HTTPException(status_code=400, detail={"error": str(exc)}) from exc
+
+    @router.get("/api/image-storage/r2/targets", response_model=ImageStorageTargetsView)
+    async def list_image_storage_r2_targets(authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        return {"targets": await run_in_threadpool(image_storage_service.r2_target_views)}
+
+    @router.post(
+        "/api/image-storage/r2/targets",
+        response_model=ImageStorageTargetMutation,
+        status_code=201,
+    )
+    async def create_image_storage_r2_target(
+        body: ImageStorageTargetCreateRequest,
+        authorization: str | None = Header(default=None),
+    ):
+        require_admin(authorization)
+        try:
+            target = await run_in_threadpool(
+                image_storage_service.save_r2_target,
+                body.model_dump(),
+            )
+            return {"target": target}
+        except ImageStorageError as exc:
+            raise HTTPException(status_code=400, detail={"error": str(exc)}) from exc
+
+    @router.patch(
+        "/api/image-storage/r2/targets/{target_id}",
+        response_model=ImageStorageTargetMutation,
+    )
+    async def update_image_storage_r2_target(
+        target_id: str,
+        body: ImageStorageTargetPatchRequest,
+        authorization: str | None = Header(default=None),
+    ):
+        require_admin(authorization)
+        current = await run_in_threadpool(image_storage_service.get_r2_target, target_id)
+        if current is None:
+            raise HTTPException(status_code=404, detail={"error": "R2 图片存储目标不存在"})
+        payload = body.model_dump(exclude_unset=True)
+        payload["id"] = target_id
+        try:
+            target = await run_in_threadpool(image_storage_service.save_r2_target, payload)
+            return {"target": target}
+        except ImageStorageError as exc:
+            raise HTTPException(status_code=400, detail={"error": str(exc)}) from exc
+
+    @router.delete(
+        "/api/image-storage/r2/targets/{target_id}",
+        response_model=ImageStorageTargetDeleteResult,
+    )
+    async def delete_image_storage_r2_target(
+        target_id: str,
+        authorization: str | None = Header(default=None),
+    ):
+        require_admin(authorization)
+        try:
+            deleted = await run_in_threadpool(image_storage_service.delete_r2_target, target_id)
+        except ImageStorageError as exc:
+            raise HTTPException(status_code=409, detail={"error": str(exc)}) from exc
+        if not deleted:
+            raise HTTPException(status_code=404, detail={"error": "R2 图片存储目标不存在"})
+        return {"deleted": True, "id": target_id}
+
+    @router.post(
+        "/api/image-storage/r2/targets/{target_id}/test",
+        response_model=ImageStorageTargetTestResult,
+    )
+    async def test_image_storage_r2_target(
+        target_id: str,
+        authorization: str | None = Header(default=None),
+    ):
+        require_admin(authorization)
+        try:
+            result = await run_in_threadpool(image_storage_service.test_r2_target, target_id)
+        except ImageStorageError as exc:
+            raise HTTPException(status_code=404, detail={"error": str(exc)}) from exc
+        return {"result": {**result, "target_id": target_id}}
 
     @router.get("/api/backups")
     async def get_backups(authorization: str | None = Header(default=None)):
